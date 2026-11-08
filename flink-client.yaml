@@ -1,0 +1,12 @@
+services:
+  sql-client:
+    image: flink:1.20.3-scala_2.12-java17
+    command: ["/opt/flink/bin/sql-client.sh", "-j", "/sql/kafka.jar", "-f", "/sql/flink.sql"]
+    environment:
+      FLINK_PROPERTIES: |
+        execution.target: remote
+        rest.address: jobmanager
+    volumes:
+      - ./flink.sql:/sql/flink.sql:ro
+      - ./kafka.jar:/sql/kafka.jar:ro
+    profiles: [flink]

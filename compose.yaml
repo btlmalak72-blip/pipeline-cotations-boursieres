@@ -1,0 +1,82 @@
+name: cotations-demo
+services:
+  redpanda:
+    image: docker.redpanda.com/redpandadata/redpanda:v26.2.6
+    command:
+      - redpanda
+      - start
+      - --mode=dev-container
+      - --smp=1
+      - --kafka-addr=0.0.0.0:9092
+      - --advertise-kafka-addr=redpanda:9092
+    volumes:
+      - data:/var/lib/redpanda/data
+    healthcheck:
+      test: ["CMD", "rpk", "cluster", "info", "-X", "brokers=redpanda:9092"]
+      interval: 3s
+      timeout: 3s
+      retries: 20
+  questdb:
+    image: questdb/questdb:10.1.0
+    ports: ["127.0.0.1:9100:9000"]
+    volumes: ["questdb-data:/var/lib/questdb"]
+  grafana:
+    image: grafana/grafana:12.1.1
+    ports: ["127.0.0.1:3100:3000"]
+    volumes:
+      - ./grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./grafana/dashboard.json:/dashboards/cotations.json:ro
+      - grafana-data:/var/lib/grafana
+    depends_on: [questdb]
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    volumes: ["redis-data:/data"]
+  bridge:
+    build: .
+    image: cotations-python:local
+    command: ["python", "-u", "bridge.py"]
+    restart: on-failure
+    depends_on:
+      redpanda:
+        condition: service_healthy
+      questdb:
+        condition: service_started
+      redis:
+        condition: service_started
+  jobmanager:
+    image: flink:1.20.3-scala_2.12-java17
+    command: jobmanager
+    ports: ["127.0.0.1:8281:8081"]
+    environment:
+      FLINK_PROPERTIES: "jobmanager.rpc.address: jobmanager"
+    profiles: [flink]
+  taskmanager:
+    image: flink:1.20.3-scala_2.12-java17
+    command: taskmanager
+    depends_on: [jobmanager]
+    environment:
+      FLINK_PROPERTIES: "jobmanager.rpc.address: jobmanager"
+    profiles: [flink]
+  dagster:
+    image: cotations-python:local
+    build: .
+    command: ["dagster", "dev", "-f", "orchestration.py", "-h", "0.0.0.0", "-p", "3001"]
+    environment:
+      DAGSTER_HOME: /dagster
+    volumes: ["dagster-data:/dagster"]
+    ports: ["127.0.0.1:3101:3001"]
+    profiles: [dagster]
+  websocket:
+    image: cotations-python:local
+    build: .
+    command: ["python", "-u", "collecteur.py"]
+    environment:
+      MASSIVE_API_KEY:
+    profiles: [live]
+volumes:
+  data:
+  questdb-data:
+  grafana-data:
+  redis-data:
+  dagster-data:
